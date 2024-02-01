@@ -1,4 +1,4 @@
-name: 'Run ECS Task'
+name: 'Run One-Off ECS Task'
 description: 'Runs the specified ECS task as a one-off task with the specified command'
 inputs:
   ecs-service:
