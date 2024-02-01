@@ -1,0 +1,77 @@
+name: 'Run ECS Task'
+description: 'Runs the specified ECS task as a one-off task with the specified command'
+inputs:
+  ecs-service:
+    description: 'ECS service name'
+    required: true
+  ecs-cluster:
+    description: 'ECS cluster name'
+    required: true
+  task-definition:
+    description: 'ECS task definition name'
+    required: true
+  container-name:
+    description: 'ECS task container name'
+    required: true
+  command:
+    description: 'Command to run in the ECS task'
+    required: true
+outputs:
+  task-arn:
+    description: "ARN of the ECS task"
+    value: ${{ steps.run-task.outputs.stdout }}
+runs:
+  using: "composite"
+  steps:
+
+    # Capture the subnets from the ECS service
+    - name: Capture subnets
+      id: service-subnets
+      uses: mathiasvr/command-output@v2.0.0
+      with:
+        run: |
+          aws ecs describe-services \
+            --cluster ${{ inputs.ecs-cluster }} \
+            --services ${{ inputs.ecs-service }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' \
+            --output text | tr '\t' ','
+
+    # Capture the security groups from the ECS service
+    - name: Capture security groups
+      id: service-security-groups
+      uses: mathiasvr/command-output@v2.0.0
+      with:
+        run: |
+          aws ecs describe-services \
+            --cluster ${{ inputs.ecs-cluster }} \
+            --services ${{ inputs.ecs-service }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups' \
+            --output text | tr '\t' ','
+
+    # Split the command into an array
+    - name: Split command
+      id: split-command
+      shell: bash
+      run: |
+        read -ra TOKENS <<< "${{ inputs.command }}"
+        OUTPUT="["
+        for TOKEN in "${TOKENS[@]}"; do
+          OUTPUT+="'$TOKEN',"
+        done
+        OUTPUT="${OUTPUT%,}]"
+        echo "command=$OUTPUT" >> $GITHUB_OUTPUT
+
+    # Run the task
+    - name: Run ECS Task
+      id: run-task
+      uses: mathiasvr/command-output@v2.0.0
+      with:
+        run: |
+          aws ecs run-task \
+            --cluster ${{ inputs.ecs-cluster }} \
+            --task-definition ${{ inputs.task-definition }} \
+            --overrides='containerOverrides=[{name=${{ inputs.container-name }},command=${{ steps.split-command.outputs.command }}}]' \
+            --launch-type FARGATE \
+            --network-configuration 'awsvpcConfiguration={subnets=[${{ steps.service-subnets.outputs.stdout }}],securityGroups=[${{ steps.service-security-groups.outputs.stdout }}],assignPublicIp=ENABLED}' \
+            --query tasks[0].taskArn \
+            --output text
